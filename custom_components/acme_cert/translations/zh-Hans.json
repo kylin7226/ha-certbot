@@ -1,0 +1,109 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ACME 证书",
+        "description": "填写要签发的证书信息。",
+        "data": {
+          "domains": "域名",
+          "acme_server": "ACME 服务器",
+          "acme_server_url": "自定义目录地址",
+          "email": "账户邮箱",
+          "keylength": "密钥长度",
+          "days": "剩余天数低于该值时续期",
+          "dns_provider": "DNS 服务商"
+        },
+        "data_description": {
+          "domains": "逗号分隔，第一个域名作为证书主名，支持通配符，例如 example.com,*.example.com",
+          "acme_server_url": "仅在 ACME 服务器选择 Custom 时生效",
+          "email": "CA 用它发送到期提醒，可选但建议填写",
+          "days": "证书剩余天数小于等于该值时自动续期"
+        }
+      },
+      "credentials": {
+        "title": "DNS 凭证",
+        "description": "{provider} 支持以下凭证字段：\n{fields}\n{detail}",
+        "data": {
+          "auth_username": "用户名 / 账户",
+          "auth_token": "API Token",
+          "auth_password": "密码",
+          "auth_api_key": "API Key",
+          "auth_key": "API Key",
+          "auth_key_id": "AccessKey ID",
+          "auth_secret": "AccessKey Secret",
+          "auth_client_id": "Client ID",
+          "auth_client_secret": "Client Secret",
+          "auth_id": "账户 ID",
+          "auth_region": "区域",
+          "zone_id": "Zone ID",
+          "api_endpoint": "API 地址",
+          "eab_kid": "EAB Key ID",
+          "eab_hmac_key": "EAB HMAC Key"
+        },
+        "data_description": {
+          "eab_kid": "ZeroSSL、Google Trust Services、SSL.com 需要",
+          "eab_hmac_key": "ZeroSSL、Google Trust Services、SSL.com 需要"
+        }
+      }
+    },
+    "error": {
+      "invalid_domains": "域名格式不正确",
+      "server_url_required": "选择 Custom 时必须填写目录地址",
+      "credentials_required": "至少填写一个凭证字段",
+      "eab_required": "该 CA 需要填写 EAB 凭证",
+      "cannot_authenticate": "DNS 服务商拒绝了这些凭证"
+    },
+    "abort": {
+      "already_configured": "该域名与同一 CA 的组合已经配置过了"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ACME 证书选项",
+        "description": "续期与 DNS 生效等待设置。",
+        "data": {
+          "auto_renew": "自动续期",
+          "days": "剩余天数低于该值时续期",
+          "check_hours": "证书检查间隔（小时）",
+          "propagation_timeout": "等待 DNS 生效的最长秒数",
+          "propagation_interval": "DNS 生效检查间隔（秒）",
+          "reload_service": "证书安装后调用的服务"
+        },
+        "data_description": {
+          "reload_service": "例如 homeassistant.restart，留空表示不调用"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "certificate": {
+        "name": "证书",
+        "state": {
+          "valid": "有效",
+          "renewal_required": "需要续期",
+          "expired": "已过期",
+          "not_found": "未找到",
+          "error": "错误"
+        }
+      }
+    }
+  },
+  "services": {
+    "issue_certificate": {
+      "name": "签发 / 续期证书",
+      "description": "立即执行一次 ACME dns-01 签发并写入证书文件。",
+      "fields": {
+        "config_entry_id": {
+          "name": "配置条目",
+          "description": "要签发证书的条目。"
+        },
+        "force": {
+          "name": "强制",
+          "description": "重新生成私钥，即使证书还没到续期时间也强制申请。"
+        }
+      }
+    }
+  }
+}

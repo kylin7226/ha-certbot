@@ -1,0 +1,22 @@
+issue_certificate:
+  name: Issue or renew a certificate
+  description: >-
+    Runs the ACME dns-01 flow right away and publishes the certificate to the
+    SSL directory.
+  fields:
+    config_entry_id:
+      name: Config entry
+      description: The certificate entry to issue for.
+      required: true
+      selector:
+        config_entry:
+          integration: acme_cert
+    force:
+      name: Force
+      description: >-
+        Generate a new private key and request the certificate even when it is
+        not due for renewal yet.
+      required: false
+      default: false
+      selector:
+        boolean:
