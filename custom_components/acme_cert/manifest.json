@@ -4,10 +4,10 @@
   "codeowners": ["@kylin7226"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/kylin7226/ha-acme-sh",
+  "documentation": "https://github.com/kylin7226/ha-certbot",
   "integration_type": "service",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/kylin7226/ha-acme-sh/issues",
+  "issue_tracker": "https://github.com/kylin7226/ha-certbot/issues",
   "loggers": ["acme", "josepy", "lexicon", "dns"],
   "requirements": ["acme==5.10.0", "dns-lexicon==3.26.0"],
   "version": "1.0.0"

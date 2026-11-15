@@ -34,7 +34,7 @@
 ### HACS（推荐）
 
 1. HACS → 集成 → 右上角 ⋮ → 自定义仓库
-2. 仓库地址 `https://github.com/kylin7226/ha-acme-sh`，类别选 **集成**
+2. 仓库地址 `https://github.com/kylin7226/ha-certbot`，类别选 **集成**
 3. 搜索 “ACME SSL Certificate Manager” → 下载 → 重启 Home Assistant
 
 ### 手动
