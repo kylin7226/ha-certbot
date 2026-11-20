@@ -2,8 +2,12 @@
   "config": {
     "step": {
       "user": {
-        "title": "ACME certificate",
+        "title": "ha-certbot",
         "description": "Describe the certificate you want to issue.",
+        "menu_options": {
+          "new_certificate": "Configure a new certificate",
+          "migrate": "Import an old acme_cert entry"
+        },
         "data": {
           "domains": "Domains",
           "acme_server": "ACME server",
@@ -20,10 +24,33 @@
           "days": "Automatic renewal starts once the certificate has this many days left"
         }
       },
+      "new_certificate": {
+        "title": "ha-certbot",
+        "description": "Describe the certificate you want to issue.",
+        "data": {
+          "domains": "Domains",
+          "acme_server": "ACME server",
+          "acme_server_url": "Custom directory URL",
+          "email": "Account email",
+          "keylength": "Key length",
+          "days": "Renew when fewer days remain",
+          "dns_provider": "DNS provider"
+        },
+        "data_description": {
+          "domains": "Comma separated; wildcards are allowed. The first domain names the certificate.",
+          "acme_server_url": "Only used for Custom. Must be an HTTPS URL without user credentials or a fragment."
+        }
+      },
+      "migrate": {
+        "title": "Import an old configuration",
+        "description": "Disable the old entry first. Import copies its configuration and eligible account/certificate files without deleting the originals. Old shared certificates with ambiguous CA ownership are retained but not imported. Update HTTPS paths and automations after verifying the new entry.",
+        "data": {"legacy_entry_id": "Old configuration entry"}
+      },
       "credentials": {
         "title": "DNS credentials",
-        "description": "Credentials accepted by {provider}:\n{fields}\n{detail}",
+        "description": "Credentials accepted by {provider}:\n{fields}\n{detail}\nWhen updating an entry, leave secret fields empty to retain their values. Enable replacement to discard all previous DNS credentials. Custom CAs accept optional EAB credentials as a pair.",
         "data": {
+          "replace_credentials": "Replace all DNS credentials",
           "auth_username": "User name or account",
           "auth_token": "API token",
           "auth_password": "Password",
@@ -51,16 +78,22 @@
       "server_url_required": "A directory URL is required when Custom is selected",
       "credentials_required": "Fill in at least one credential field",
       "eab_required": "This CA requires EAB credentials",
-      "cannot_authenticate": "The DNS provider rejected these credentials"
+      "cannot_authenticate": "The DNS provider rejected these credentials",
+      "invalid_server_url": "Enter a valid HTTPS directory URL without user credentials or a fragment",
+      "eab_pair_required": "Enter both EAB fields, or leave both empty",
+      "legacy_not_found": "The old entry no longer exists",
+      "legacy_must_be_disabled": "Disable the old integration entry before importing it",
+      "invalid_legacy_config": "The old entry does not contain a supported certificate configuration"
     },
     "abort": {
-      "already_configured": "This domain is already configured with the same CA"
+      "already_configured": "This domain is already configured with the same CA",
+      "no_legacy_entries": "No old acme_cert entries were found"
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "ACME certificate options",
+        "title": "ha-certbot options",
         "description": "Renewal and DNS propagation settings.",
         "data": {
           "auto_renew": "Renew automatically",

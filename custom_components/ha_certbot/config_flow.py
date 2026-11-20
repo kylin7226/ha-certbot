@@ -1,4 +1,4 @@
-"""Config flow for the ACME certificate integration."""
+"""Config flow for ha-certbot."""
 from __future__ import annotations
 
 import logging
@@ -19,7 +19,7 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from .acme import parse_domains
+from .acme import entry_unique_id, normalize_server_url, parse_domains
 from .const import (
     ACME_SERVERS,
     ACME_SERVER_LABELS,
@@ -35,6 +35,8 @@ from .const import (
     CONF_EAB_KID,
     CONF_EMAIL,
     CONF_KEYLENGTH,
+    CONF_LEGACY_ENTRY_ID,
+    LEGACY_DOMAIN,
     CONF_PROPAGATION_INTERVAL,
     CONF_PROPAGATION_TIMEOUT,
     CONF_RELOAD_SERVICE,
@@ -52,6 +54,7 @@ from .const import (
     KEYLENGTH_OPTIONS,
 )
 from .dns import available_providers, check_credentials, provider_options
+from .errors import redact
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -100,21 +103,41 @@ def _suggested_domains(values: dict[str, Any]) -> str:
     return str(domains)
 
 
-class AcmeCertConfigFlow(ConfigFlow, domain=DOMAIN):
+class HaCertbotConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the setup of one certificate."""
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         """Keep the first step's answers for the credentials step."""
         self._domains: list[str] = []
         self._settings: dict[str, Any] = {}
         self._detail = ""
+        self._editing_entry: ConfigEntry | None = None
+
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        self._editing_entry = self._get_reconfigure_entry()
+        self._settings = {**self._editing_entry.data, **self._editing_entry.options}
+        self._domains = parse_domains(self._settings[CONF_DOMAINS])
+        return await self.async_step_credentials(user_input)
+
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
+        self._editing_entry = self._get_reauth_entry()
+        self._settings = {**self._editing_entry.data, **self._editing_entry.options}
+        self._domains = parse_domains(self._settings[CONF_DOMAINS])
+        return await self.async_step_credentials()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Ask for the domains, the CA and the DNS provider."""
+        if user_input is None and self.hass.config_entries.async_entries(LEGACY_DOMAIN):
+            return self.async_show_menu(step_id="user", menu_options=["new_certificate", "migrate"])
+        return await self.async_step_new_certificate(user_input)
+
+    async def async_step_new_certificate(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -130,19 +153,27 @@ class AcmeCertConfigFlow(ConfigFlow, domain=DOMAIN):
                 if server == CUSTOM_SERVER and not custom_url:
                     errors[CONF_ACME_SERVER_URL] = "server_url_required"
                 else:
-                    await self.async_set_unique_id(f"{server}|{domains[0]}")
-                    self._abort_if_unique_id_configured()
-                    self._domains = domains
-                    self._settings = {
-                        **user_input,
-                        CONF_DOMAINS: domains,
-                        CONF_ACME_SERVER_URL: custom_url or ACME_SERVERS[server],
-                    }
-                    return await self.async_step_credentials()
+                    try:
+                        server_url = normalize_server_url(
+                            custom_url if server == CUSTOM_SERVER else ACME_SERVERS[server]
+                        )
+                    except ValueError:
+                        errors[CONF_ACME_SERVER_URL] = "invalid_server_url"
+                    else:
+                        await self.async_set_unique_id(entry_unique_id(server_url, domains[0]))
+                        self._abort_if_unique_id_configured()
+                        self._domains = domains
+                        self._settings = {
+                            **user_input,
+                            CONF_DOMAINS: domains,
+                            CONF_ACME_SERVER_URL: server_url,
+                        }
+                        return await self.async_step_credentials()
 
         values = user_input or {}
+        providers = await self.hass.async_add_executor_job(available_providers)
         return self.async_show_form(
-            step_id="user",
+            step_id="new_certificate",
             data_schema=vol.Schema(
                 {
                     vol.Required(
@@ -172,12 +203,47 @@ class AcmeCertConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_DNS_PROVIDER,
                         default=values.get(CONF_DNS_PROVIDER, DEFAULT_DNS_PROVIDER),
                     ): _selector(
-                        _option_list((name, name) for name in available_providers()),
+                        _option_list((name, name) for name in providers),
                         custom_value=True,
                     ),
                 }
             ),
             errors=errors,
+        )
+
+    async def async_step_migrate(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        entries = {entry.entry_id: entry for entry in self.hass.config_entries.async_entries(LEGACY_DOMAIN)}
+        if not entries:
+            return self.async_abort(reason="no_legacy_entries")
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            entry = entries.get(user_input[CONF_LEGACY_ENTRY_ID])
+            if entry is None:
+                errors["base"] = "legacy_not_found"
+            elif not entry.disabled_by:
+                errors["base"] = "legacy_must_be_disabled"
+            else:
+                data = {**entry.data, **entry.options}
+                try:
+                    domains = parse_domains(data[CONF_DOMAINS])
+                    server_url = normalize_server_url(
+                        data.get(CONF_ACME_SERVER_URL) or ACME_SERVERS[data[CONF_ACME_SERVER]]
+                    )
+                    if not data.get(CONF_DNS_PROVIDER) or not data.get(CONF_DNS_CREDENTIALS):
+                        raise ValueError("missing DNS settings")
+                except (KeyError, ValueError):
+                    errors["base"] = "invalid_legacy_config"
+                else:
+                    await self.async_set_unique_id(entry_unique_id(server_url, domains[0]))
+                    self._abort_if_unique_id_configured()
+                    data.update({CONF_DOMAINS: domains, CONF_ACME_SERVER_URL: server_url,
+                                 CONF_LEGACY_ENTRY_ID: entry.entry_id})
+                    return self.async_create_entry(title=entry.title, data=data)
+        return self.async_show_form(
+            step_id="migrate", errors=errors,
+            data_schema=vol.Schema({vol.Required(CONF_LEGACY_ENTRY_ID): _selector(
+                _option_list((entry.entry_id, entry.title) for entry in entries.values())
+            )}),
         )
 
     async def async_step_credentials(
@@ -190,49 +256,68 @@ class AcmeCertConfigFlow(ConfigFlow, domain=DOMAIN):
         needs_eab = server in EAB_REQUIRED_SERVERS
         fields = await self.hass.async_add_executor_job(_credential_fields, provider)
 
+        existing = self._settings.get(CONF_DNS_CREDENTIALS, {})
         if user_input is not None:
-            credentials = {
-                key: str(value).strip()
-                for key, value in user_input.items()
-                if key not in (CONF_EAB_KID, CONF_EAB_HMAC_KEY) and str(value).strip()
-            }
-            eab_kid = str(user_input.get(CONF_EAB_KID, "")).strip()
+            credentials = dict(existing) if self._editing_entry and not user_input.get("replace_credentials") else {}
+            for name, _ in fields:
+                if name not in user_input:
+                    continue
+                value = str(user_input[name]).strip()
+                if value:
+                    credentials[name] = value
+                elif not _is_secret(name):
+                    credentials.pop(name, None)
+            eab_kid = str(user_input.get(CONF_EAB_KID, self._settings.get(CONF_EAB_KID, ""))).strip()
             eab_hmac_key = str(user_input.get(CONF_EAB_HMAC_KEY, "")).strip()
+            if self._editing_entry and eab_kid and not eab_hmac_key:
+                eab_hmac_key = self._settings.get(CONF_EAB_HMAC_KEY, "")
 
             if needs_eab and not (eab_kid and eab_hmac_key):
                 errors[CONF_EAB_KID] = "eab_required"
+            elif bool(eab_kid) != bool(eab_hmac_key):
+                errors[CONF_EAB_KID] = "eab_pair_required"
             elif not credentials:
                 errors["base"] = "credentials_required"
             else:
-                zone = self._domains[0]
-                if zone.startswith("*."):
-                    zone = zone[2:]
                 self._detail = ""
                 try:
-                    await self.hass.async_add_executor_job(
-                        check_credentials, provider, zone, credentials
-                    )
-                except Exception as err:  # noqa: BLE001 - providers raise many exception types
-                    _LOGGER.warning("DNS credentials for %s were rejected: %s", provider, err)
+                    for zone in dict.fromkeys(domain.removeprefix("*.") for domain in self._domains):
+                        await self.hass.async_add_executor_job(
+                            check_credentials, provider, zone, credentials
+                        )
+                except Exception as err:
+                    self._detail = redact(str(err), (
+                        *existing.values(), *credentials.values(), eab_kid, eab_hmac_key
+                    ))[:ERROR_DETAIL_LIMIT]
+                    _LOGGER.warning("DNS credentials for %s were rejected: %s", provider, self._detail)
                     errors["base"] = "cannot_authenticate"
-                    self._detail = str(err)[:ERROR_DETAIL_LIMIT]
                 else:
-                    data = {**self._settings, CONF_DNS_CREDENTIALS: credentials}
-                    if eab_kid:
-                        data[CONF_EAB_KID] = eab_kid
-                        data[CONF_EAB_HMAC_KEY] = eab_hmac_key
+                    updates = {
+                        CONF_DNS_CREDENTIALS: credentials,
+                        CONF_EAB_KID: eab_kid, CONF_EAB_HMAC_KEY: eab_hmac_key,
+                    }
+                    if self._editing_entry:
+                        options = {key: value for key, value in self._editing_entry.options.items() if key not in updates}
+                        return self.async_update_and_abort(
+                            self._editing_entry, data_updates=updates, options=options
+                        )
                     return self.async_create_entry(
                         title=f"{self._domains[0]} ({ACME_SERVER_LABELS.get(server, server)})",
-                        data=data,
+                        data={**self._settings, **updates},
                     )
 
         schema: dict[Any, Any] = {}
+        if self._editing_entry:
+            schema[vol.Optional("replace_credentials", default=False)] = bool
         for name, _description in fields:
-            schema[vol.Optional(name)] = _text(
+            description = {} if _is_secret(name) else {"suggested_value": existing.get(name, "")}
+            schema[vol.Optional(name, description=description)] = _text(
                 TextSelectorType.PASSWORD if _is_secret(name) else TextSelectorType.TEXT
             )
-        if needs_eab:
-            schema[vol.Optional(CONF_EAB_KID)] = str
+        if needs_eab or server == CUSTOM_SERVER:
+            schema[vol.Optional(CONF_EAB_KID, description={
+                "suggested_value": self._settings.get(CONF_EAB_KID, "")
+            })] = str
             schema[vol.Optional(CONF_EAB_HMAC_KEY)] = _text(TextSelectorType.PASSWORD)
 
         return self.async_show_form(
@@ -248,12 +333,12 @@ class AcmeCertConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> AcmeCertOptionsFlow:
+    def async_get_options_flow(config_entry: ConfigEntry) -> HaCertbotOptionsFlow:
         """Return the options flow handler."""
-        return AcmeCertOptionsFlow()
+        return HaCertbotOptionsFlow()
 
 
-class AcmeCertOptionsFlow(OptionsFlow):
+class HaCertbotOptionsFlow(OptionsFlow):
     """Handle renewal, propagation and reload options."""
 
     async def async_step_init(

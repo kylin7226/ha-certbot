@@ -17,7 +17,7 @@ from .const import (
     STATUS_RENEWAL_REQUIRED,
     STATUS_VALID,
 )
-from .coordinator import AcmeCertCoordinator
+from .coordinator import HaCertbotCoordinator
 
 ICONS = {
     STATUS_VALID: "mdi:check-circle",
@@ -45,16 +45,16 @@ ATTRIBUTES = (
 
 async def async_setup_entry(hass, entry, async_add_entities) -> None:
     """Add the certificate sensor of one config entry."""
-    async_add_entities([AcmeCertificateSensor(hass.data[DOMAIN][entry.entry_id])])
+    async_add_entities([HaCertbotCertificateSensor(hass.data[DOMAIN][entry.entry_id])])
 
 
-class AcmeCertificateSensor(CoordinatorEntity[AcmeCertCoordinator], SensorEntity):
+class HaCertbotCertificateSensor(CoordinatorEntity[HaCertbotCoordinator], SensorEntity):
     """Reports whether the managed certificate is still valid."""
 
     _attr_has_entity_name = True
     _attr_translation_key = "certificate"
 
-    def __init__(self, coordinator: AcmeCertCoordinator) -> None:
+    def __init__(self, coordinator: HaCertbotCoordinator) -> None:
         """Bind the sensor to the entry's coordinator."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.entry.entry_id}_certificate"
@@ -62,7 +62,7 @@ class AcmeCertificateSensor(CoordinatorEntity[AcmeCertCoordinator], SensorEntity
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, coordinator.entry.entry_id)},
             name=coordinator.entry.title,
-            manufacturer="ACME",
+            manufacturer="ha-certbot",
             model=ACME_SERVER_LABELS.get(server, server),
             entry_type=DeviceEntryType.SERVICE,
         )

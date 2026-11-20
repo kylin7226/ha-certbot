@@ -1,7 +1,9 @@
-"""Constants for the ACME certificate integration."""
+"""Constants for ha-certbot."""
 from __future__ import annotations
 
-DOMAIN = "acme_cert"
+DOMAIN = "ha_certbot"
+LEGACY_DOMAIN = "acme_cert"
+CONF_LEGACY_ENTRY_ID = "legacy_entry_id"
 
 CONF_DOMAINS = "domains"
 CONF_EMAIL = "email"
@@ -59,15 +61,9 @@ EAB_REQUIRED_SERVERS = frozenset(
 
 KEYLENGTH_OPTIONS = ("2048", "3072", "4096", "ec-256", "ec-384")
 
-DATA_DIR_NAME = "acme_cert"
+DATA_DIR_NAME = "ha_certbot"
 ACCOUNTS_DIR_NAME = "accounts"
-LIVE_DIR_NAME = "live"
 SSL_DIR_NAME = "ssl"
-
-CERT_SUFFIX_FULLCHAIN = ".pem"
-CERT_SUFFIX_KEY = "-key.pem"
-CERT_SUFFIX_CERT = "-cert.pem"
-CERT_SUFFIX_CA = "-ca.pem"
 
 STATUS_VALID = "valid"
 STATUS_RENEWAL_REQUIRED = "renewal_required"
@@ -82,6 +78,6 @@ ATTR_FORCE = "force"
 EVENT_ISSUED = f"{DOMAIN}_issued"
 EVENT_FAILED = f"{DOMAIN}_failed"
 
-USER_AGENT = "home-assistant-acme-cert/1.0"
+USER_AGENT = "ha-certbot/2.0"
 NETWORK_TIMEOUT = 30
 ORDER_TIMEOUT = 180

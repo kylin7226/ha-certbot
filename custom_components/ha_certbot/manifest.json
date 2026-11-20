@@ -1,6 +1,6 @@
 {
-  "domain": "acme_cert",
-  "name": "ACME SSL Certificate Manager",
+  "domain": "ha_certbot",
+  "name": "ha-certbot",
   "codeowners": ["@kylin7226"],
   "config_flow": true,
   "dependencies": [],
@@ -10,5 +10,5 @@
   "issue_tracker": "https://github.com/kylin7226/ha-certbot/issues",
   "loggers": ["acme", "josepy", "lexicon", "dns"],
   "requirements": ["acme==5.10.0", "dns-lexicon==3.26.0"],
-  "version": "1.0.0"
+  "version": "2.0.0"
 }

@@ -1,0 +1,142 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ha-certbot",
+        "description": "Describe the certificate you want to issue.",
+        "menu_options": {
+          "new_certificate": "Configure a new certificate",
+          "migrate": "Import an old acme_cert entry"
+        },
+        "data": {
+          "domains": "Domains",
+          "acme_server": "ACME server",
+          "acme_server_url": "Custom directory URL",
+          "email": "Account email",
+          "keylength": "Key length",
+          "days": "Renew when fewer days remain",
+          "dns_provider": "DNS provider"
+        },
+        "data_description": {
+          "domains": "Comma separated, the first one becomes the certificate name. Wildcards are allowed, for example example.com,*.example.com",
+          "acme_server_url": "Only used when the ACME server is set to Custom",
+          "email": "The CA uses it for expiry notices, optional but recommended",
+          "days": "Automatic renewal starts once the certificate has this many days left"
+        }
+      },
+      "new_certificate": {
+        "title": "ha-certbot",
+        "description": "Describe the certificate you want to issue.",
+        "data": {
+          "domains": "Domains",
+          "acme_server": "ACME server",
+          "acme_server_url": "Custom directory URL",
+          "email": "Account email",
+          "keylength": "Key length",
+          "days": "Renew when fewer days remain",
+          "dns_provider": "DNS provider"
+        },
+        "data_description": {
+          "domains": "Comma separated; wildcards are allowed. The first domain names the certificate.",
+          "acme_server_url": "Only used for Custom. Must be an HTTPS URL without user credentials or a fragment."
+        }
+      },
+      "migrate": {
+        "title": "Import an old configuration",
+        "description": "Disable the old entry first. Import copies its configuration and eligible account/certificate files without deleting the originals. Old shared certificates with ambiguous CA ownership are retained but not imported. Update HTTPS paths and automations after verifying the new entry.",
+        "data": {"legacy_entry_id": "Old configuration entry"}
+      },
+      "credentials": {
+        "title": "DNS credentials",
+        "description": "Credentials accepted by {provider}:\n{fields}\n{detail}\nWhen updating an entry, leave secret fields empty to retain their values. Enable replacement to discard all previous DNS credentials. Custom CAs accept optional EAB credentials as a pair.",
+        "data": {
+          "replace_credentials": "Replace all DNS credentials",
+          "auth_username": "User name or account",
+          "auth_token": "API token",
+          "auth_password": "Password",
+          "auth_api_key": "API key",
+          "auth_key": "API key",
+          "auth_key_id": "Access key ID",
+          "auth_secret": "Access key secret",
+          "auth_client_id": "Client ID",
+          "auth_client_secret": "Client secret",
+          "auth_id": "Account ID",
+          "auth_region": "Region",
+          "zone_id": "Zone ID",
+          "api_endpoint": "API endpoint",
+          "eab_kid": "EAB key ID",
+          "eab_hmac_key": "EAB HMAC key"
+        },
+        "data_description": {
+          "eab_kid": "Required by ZeroSSL, Google Trust Services and SSL.com",
+          "eab_hmac_key": "Required by ZeroSSL, Google Trust Services and SSL.com"
+        }
+      }
+    },
+    "error": {
+      "invalid_domains": "At least one domain name is invalid",
+      "server_url_required": "A directory URL is required when Custom is selected",
+      "credentials_required": "Fill in at least one credential field",
+      "eab_required": "This CA requires EAB credentials",
+      "cannot_authenticate": "The DNS provider rejected these credentials",
+      "invalid_server_url": "Enter a valid HTTPS directory URL without user credentials or a fragment",
+      "eab_pair_required": "Enter both EAB fields, or leave both empty",
+      "legacy_not_found": "The old entry no longer exists",
+      "legacy_must_be_disabled": "Disable the old integration entry before importing it",
+      "invalid_legacy_config": "The old entry does not contain a supported certificate configuration"
+    },
+    "abort": {
+      "already_configured": "This domain is already configured with the same CA",
+      "no_legacy_entries": "No old acme_cert entries were found"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ha-certbot options",
+        "description": "Renewal and DNS propagation settings.",
+        "data": {
+          "auto_renew": "Renew automatically",
+          "days": "Renew when fewer days remain",
+          "check_hours": "Hours between certificate checks",
+          "propagation_timeout": "Seconds to wait for DNS propagation",
+          "propagation_interval": "Seconds between DNS propagation checks",
+          "reload_service": "Service to call after installing the certificate"
+        },
+        "data_description": {
+          "reload_service": "For example homeassistant.restart, leave empty to do nothing"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "certificate": {
+        "name": "Certificate",
+        "state": {
+          "valid": "Valid",
+          "renewal_required": "Renewal required",
+          "expired": "Expired",
+          "not_found": "Not found",
+          "error": "Error"
+        }
+      }
+    }
+  },
+  "services": {
+    "issue_certificate": {
+      "name": "Issue or renew a certificate",
+      "description": "Runs the ACME dns-01 flow right away and publishes the certificate.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry",
+          "description": "The certificate entry to issue for."
+        },
+        "force": {
+          "name": "Force",
+          "description": "Generate a new private key and request the certificate even when it is not due."
+        }
+      }
+    }
+  }
+}

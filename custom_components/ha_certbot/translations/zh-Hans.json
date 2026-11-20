@@ -2,8 +2,12 @@
   "config": {
     "step": {
       "user": {
-        "title": "ACME 证书",
+        "title": "ha-certbot",
         "description": "填写要签发的证书信息。",
+        "menu_options": {
+          "new_certificate": "配置新证书",
+          "migrate": "导入旧 acme_cert 配置"
+        },
         "data": {
           "domains": "域名",
           "acme_server": "ACME 服务器",
@@ -20,10 +24,33 @@
           "days": "证书剩余天数小于等于该值时自动续期"
         }
       },
+      "new_certificate": {
+        "title": "ha-certbot",
+        "description": "填写要签发的证书信息。",
+        "data": {
+          "domains": "域名",
+          "acme_server": "ACME 服务器",
+          "acme_server_url": "自定义目录地址",
+          "email": "账户邮箱",
+          "keylength": "密钥长度",
+          "days": "剩余天数低于该值时续期",
+          "dns_provider": "DNS 服务商"
+        },
+        "data_description": {
+          "domains": "逗号分隔，支持通配符，第一个域名作为证书主名。",
+          "acme_server_url": "仅选择 Custom 时使用。必须为 HTTPS 地址，不能包含用户名、密码或片段。"
+        }
+      },
+      "migrate": {
+        "title": "导入旧配置",
+        "description": "请先禁用旧集成条目。导入会复制配置及可确认归属的账户、证书，不会删除原数据。旧式共享证书无法确认 CA 归属时会保留原处但不导入。验证新条目正常后，请更新 HTTPS 路径和自动化。",
+        "data": {"legacy_entry_id": "旧配置条目"}
+      },
       "credentials": {
         "title": "DNS 凭证",
-        "description": "{provider} 支持以下凭证字段：\n{fields}\n{detail}",
+        "description": "{provider} 支持以下凭证字段：\n{fields}\n{detail}\n更新条目时，密钥字段留空表示保留原值；勾选替换则不保留任何旧 DNS 凭据。自定义 CA 可以选填一对 EAB 凭据。",
         "data": {
+          "replace_credentials": "替换全部 DNS 凭据",
           "auth_username": "用户名 / 账户",
           "auth_token": "API Token",
           "auth_password": "密码",
@@ -51,16 +78,22 @@
       "server_url_required": "选择 Custom 时必须填写目录地址",
       "credentials_required": "至少填写一个凭证字段",
       "eab_required": "该 CA 需要填写 EAB 凭证",
-      "cannot_authenticate": "DNS 服务商拒绝了这些凭证"
+      "cannot_authenticate": "DNS 服务商拒绝了这些凭证",
+      "invalid_server_url": "请填写有效的 HTTPS 目录地址，不得包含用户名、密码或片段",
+      "eab_pair_required": "EAB 两个字段需要同时填写或同时留空",
+      "legacy_not_found": "旧配置条目已不存在",
+      "legacy_must_be_disabled": "请先禁用旧集成条目，再进行导入",
+      "invalid_legacy_config": "旧条目缺少受支持的证书配置"
     },
     "abort": {
-      "already_configured": "该域名与同一 CA 的组合已经配置过了"
+      "already_configured": "该域名与同一 CA 的组合已经配置过了",
+      "no_legacy_entries": "没有找到旧 acme_cert 配置条目"
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "ACME 证书选项",
+        "title": "ha-certbot 选项",
         "description": "续期与 DNS 生效等待设置。",
         "data": {
           "auto_renew": "自动续期",

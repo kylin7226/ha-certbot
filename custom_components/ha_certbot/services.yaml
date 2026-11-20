@@ -10,7 +10,7 @@ issue_certificate:
       required: true
       selector:
         config_entry:
-          integration: acme_cert
+          integration: ha_certbot
     force:
       name: Force
       description: >-

@@ -1,0 +1,7 @@
+acme==5.10.0
+dns-lexicon==3.26.0
+cryptography==50.0.2
+pyOpenSSL==26.4.0
+requests==2.34.2
+probatio==0.13.0
+pytest==8.4.2

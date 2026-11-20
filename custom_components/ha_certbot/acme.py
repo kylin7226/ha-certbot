@@ -4,10 +4,17 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import os
 import re
+import shutil
+import tempfile
+import threading
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
+from uuid import uuid4
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -16,15 +23,10 @@ from cryptography.x509.oid import NameOID
 
 from .const import (
     ACCOUNTS_DIR_NAME,
-    CERT_SUFFIX_CA,
-    CERT_SUFFIX_CERT,
-    CERT_SUFFIX_FULLCHAIN,
-    CERT_SUFFIX_KEY,
     DATA_DIR_NAME,
     DEFAULT_KEYLENGTH,
     DEFAULT_PROPAGATION_INTERVAL,
     DEFAULT_PROPAGATION_TIMEOUT,
-    LIVE_DIR_NAME,
     NETWORK_TIMEOUT,
     ORDER_TIMEOUT,
     SSL_DIR_NAME,
@@ -36,6 +38,7 @@ from .const import (
     USER_AGENT,
 )
 from .dns import DnsChallenge, DnsError, wait_for_txt
+from .errors import redact
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,6 +85,24 @@ def parse_domains(raw: Any) -> list[str]:
     return domains
 
 
+def normalize_server_url(value: str) -> str:
+    parts = urlsplit(value.strip())
+    if (parts.scheme != "https" or not parts.hostname or parts.username is not None
+            or parts.password is not None or parts.fragment
+            or any(char.isspace() for char in value) or "\\" in value):
+        raise ValueError("ACME directory must be an HTTPS URL without credentials or a fragment")
+    host = parts.hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    port = parts.port
+    netloc = f"{host}:{port}" if port is not None and port != 443 else host
+    return urlunsplit(("https", netloc, parts.path or "/", parts.query, ""))
+
+
+def entry_unique_id(server_url: str, domain: str) -> str:
+    return f"{sha256(server_url.encode('utf-8')).hexdigest()[:16]}|{domain}"
+
+
 def generate_private_key(keylength: str) -> Any:
     """Create a certificate or account private key for the requested key length."""
     if keylength.startswith("ec-"):
@@ -95,15 +116,15 @@ def generate_private_key(keylength: str) -> Any:
 
 def write_private_key(path: Path, key: Any) -> None:
     """Store a private key as unencrypted PKCS#8 PEM, readable by root only."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(
+    _write(
+        path,
         key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
-        )
+        ).decode("ascii"),
+        0o600,
     )
-    path.chmod(0o600)
 
 
 def load_private_key(path: Path) -> Any:
@@ -113,9 +134,12 @@ def load_private_key(path: Path) -> Any:
 
 def build_csr(key: Any, domains: list[str]) -> bytes:
     """Build a CSR carrying every domain in the subject alternative name extension."""
+    subject = []
+    if len(domains[0].encode("utf-8")) <= 64:
+        subject.append(x509.NameAttribute(NameOID.COMMON_NAME, domains[0]))
     builder = (
         x509.CertificateSigningRequestBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, domains[0])]))
+        .subject_name(x509.Name(subject))
         .add_extension(
             x509.SubjectAlternativeName([x509.DNSName(name) for name in domains]),
             critical=False,
@@ -132,7 +156,7 @@ def split_fullchain(pem: str) -> tuple[str, str]:
     return blocks[0], "".join(blocks[1:])
 
 
-def certificate_info(pem_path: Path) -> dict[str, Any]:
+def certificate_info(pem_path: Path, key_path: Path, domains: list[str]) -> dict[str, Any]:
     """Describe an installed certificate without contacting anyone."""
     leaf_pem, _ = split_fullchain(pem_path.read_text(encoding="utf-8"))
     certificate = x509.load_pem_x509_certificate(leaf_pem.encode("utf-8"))
@@ -144,8 +168,19 @@ def certificate_info(pem_path: Path) -> dict[str, Any]:
             attribute.value
             for attribute in certificate.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
         ]
+    key = load_private_key(key_path)
+    public_format = serialization.PublicFormat.SubjectPublicKeyInfo
+    if certificate.public_key().public_bytes(
+        serialization.Encoding.DER, public_format
+    ) != key.public_key().public_bytes(serialization.Encoding.DER, public_format):
+        raise AcmeError("certificate and private key do not match")
+    if not set(domains).issubset({str(name).lower() for name in names}):
+        raise AcmeError("certificate does not cover all configured domains")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if certificate.not_valid_before_utc > now:
+        raise AcmeError("certificate is not yet valid")
     not_after = certificate.not_valid_after_utc
-    remaining = not_after - datetime.datetime.now(datetime.timezone.utc)
+    remaining = not_after - now
     return {
         "domains": names,
         "expiry_date": not_after.isoformat(),
@@ -171,13 +206,26 @@ def describe_error(exc: Exception) -> str:
     code = getattr(exc, "code", None)
     if description:
         return f"{code}: {description}" if code else str(description)
-    return str(exc)
+    return str(exc) or type(exc).__name__
 
 
 def _write(path: Path, content: str, mode: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    path.chmod(mode)
+    fd, temporary = tempfile.mkstemp(prefix=".write-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            os.fchmod(stream.fileno(), mode)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def _check_cancelled(cancel_event: threading.Event) -> None:
+    if cancel_event.is_set():
+        raise AcmeError("certificate operation was cancelled")
 
 
 @dataclass
@@ -200,6 +248,7 @@ class CertificateManager:
         *,
         data_dir: Path,
         ssl_dir: Path,
+        entry_id: str,
         server: str,
         server_url: str,
         email: str = "",
@@ -209,8 +258,10 @@ class CertificateManager:
     ) -> None:
         self.data_dir = Path(data_dir)
         self.ssl_dir = Path(ssl_dir)
+        self.entry_id = entry_id
         self.server = server
         self.server_url = server_url
+        self.server_id = sha256(server_url.encode("utf-8")).hexdigest()[:16]
         self.email = email
         self.keylength = keylength
         self.eab_kid = eab_kid
@@ -219,19 +270,18 @@ class CertificateManager:
     @property
     def account_dir(self) -> Path:
         """Directory of the account key and registration for the configured CA."""
-        return self.data_dir / ACCOUNTS_DIR_NAME / self.server
+        return self.data_dir / ACCOUNTS_DIR_NAME / self.server_id / self.entry_id
 
     def live_dir(self, domain: str) -> Path:
-        """Directory holding the private key and issued chain of one certificate."""
-        return self.data_dir / LIVE_DIR_NAME / domain
+        return self.ssl_dir / DATA_DIR_NAME / self.entry_id / self.server_id / domain
 
     def cert_paths(self, domain: str) -> dict[str, Path]:
-        """Paths the certificate of a domain is published to."""
+        current = self.live_dir(domain) / "current"
         return {
-            "fullchain": self.ssl_dir / f"{domain}{CERT_SUFFIX_FULLCHAIN}",
-            "key": self.ssl_dir / f"{domain}{CERT_SUFFIX_KEY}",
-            "cert": self.ssl_dir / f"{domain}{CERT_SUFFIX_CERT}",
-            "ca": self.ssl_dir / f"{domain}{CERT_SUFFIX_CA}",
+            "fullchain": current / "fullchain.pem",
+            "key": current / "privkey.pem",
+            "cert": current / "cert.pem",
+            "ca": current / "chain.pem",
         }
 
     def certificate_status(self, domains: list[str], renewal_days: int) -> dict[str, Any]:
@@ -253,8 +303,9 @@ class CertificateManager:
         if not paths["fullchain"].is_file():
             return status
         try:
-            status.update(certificate_info(paths["fullchain"]))
-        except (OSError, ValueError, AcmeError) as err:
+            current = paths["fullchain"].parent.resolve(strict=True)
+            status.update(certificate_info(current / "fullchain.pem", current / "privkey.pem", domains))
+        except (OSError, ValueError, TypeError, AcmeError) as err:
             status["status"] = STATUS_ERROR
             status["error"] = str(err)
             return status
@@ -276,6 +327,7 @@ class CertificateManager:
         propagation_timeout: int = DEFAULT_PROPAGATION_TIMEOUT,
         propagation_interval: int = DEFAULT_PROPAGATION_INTERVAL,
         force: bool = False,
+        cancel_event: threading.Event | None = None,
     ) -> IssueResult:
         """Run a full dns-01 issuance and publish the certificate. Blocking, run in an executor."""
         from acme import client as acme_client
@@ -284,13 +336,18 @@ class CertificateManager:
 
         import josepy as jose
 
+        cancel_event = cancel_event or threading.Event()
+        _check_cancelled(cancel_event)
         main = domains[0]
-        live = self.live_dir(main)
-        live.mkdir(parents=True, exist_ok=True)
-        key_path = live / "privkey.pem"
-        if force or not key_path.is_file():
-            write_private_key(key_path, generate_private_key(self.keylength))
-        certificate_key = load_private_key(key_path)
+        key_path = self.cert_paths(main)["key"]
+        certificate_key = None
+        if not force and key_path.is_file():
+            try:
+                certificate_key = load_private_key(key_path)
+            except (ValueError, TypeError):
+                pass
+        if certificate_key is None:
+            certificate_key = generate_private_key(self.keylength)
 
         account_key_path = self.account_dir / "account_key.pem"
         registration_path = self.account_dir / "registration.json"
@@ -312,52 +369,63 @@ class CertificateManager:
 
             registration = self._load_registration(registration_path, messages)
             if registration is not None:
-                net.account = registration
                 try:
                     registration = client.query_registration(registration)
-                except acme_errors.Error as err:
-                    _LOGGER.info("Stored ACME account was rejected (%s), registering again", err)
+                except messages.Error as err:
+                    if err.code != "accountDoesNotExist":
+                        raise
+                    net.account = None
                     registration = None
             if registration is None:
-                registration = client.new_account(
-                    self._registration_body(messages, directory, account_jwk)
-                )
-                net.account = registration
-                _write(registration_path, json.dumps(registration.to_json()), 0o600)
+                try:
+                    registration = client.new_account(
+                        self._registration_body(messages, directory, account_jwk)
+                    )
+                except acme_errors.ConflictError as err:
+                    registration = client.query_registration(
+                        messages.RegistrationResource(
+                            body=messages.Registration(), uri=err.location
+                        )
+                    )
+            if registration.body.status != "valid":
+                raise AcmeError("the ACME account is not valid; contact the CA before retrying")
+            net.account = registration
+            _write(registration_path, json.dumps(registration.to_json()), 0o600)
 
+            _check_cancelled(cancel_event)
             order = client.new_order(build_csr(certificate_key, domains))
             with DnsChallenge(dns_provider, credentials) as dns:
-                published = self._publish_challenges(order, messages, dns, account_jwk)
-                deadline = datetime.datetime.now() + datetime.timedelta(seconds=ORDER_TIMEOUT)
+                published = self._publish_challenges(order, messages, dns, account_jwk, cancel_event)
                 for _, zone, name, value in published:
-                    if not wait_for_txt(
-                        name, {value}, zone, propagation_timeout, propagation_interval
-                    ):
+                    _check_cancelled(cancel_event)
+                    propagated = wait_for_txt(
+                        name, {value}, zone, propagation_timeout, propagation_interval,
+                        cancel_event=cancel_event,
+                    )
+                    _check_cancelled(cancel_event)
+                    if not propagated:
                         raise DnsError(
                             f"TXT record {name} was not published within {propagation_timeout} seconds"
                         )
                 for challenge_body, _, _, _ in published:
+                    _check_cancelled(cancel_event)
                     client.answer_challenge(
                         challenge_body, challenge_body.chall.response(account_jwk)
                     )
+                _check_cancelled(cancel_event)
+                deadline = datetime.datetime.now() + datetime.timedelta(seconds=ORDER_TIMEOUT)
                 order = client.poll_authorizations(order, deadline)
+                _check_cancelled(cancel_event)
+                deadline = datetime.datetime.now() + datetime.timedelta(seconds=ORDER_TIMEOUT)
                 order = client.finalize_order(order, deadline)
-        except (acme_errors.Error, messages.Error) as err:
-            raise AcmeError(describe_error(err)) from err
+        except (acme_errors.Error, messages.Error, jose.errors.Error) as err:
+            raise AcmeError(redact(
+                describe_error(err), (*credentials.values(), self.eab_kid, self.eab_hmac_key)
+            )) from None
 
-        fullchain = order.fullchain_pem
-        cert_pem, chain_pem = split_fullchain(fullchain)
-        _write(live / "fullchain.pem", fullchain, 0o644)
-        _write(live / "cert.pem", cert_pem, 0o644)
-        _write(live / "chain.pem", chain_pem, 0o644)
-
+        _check_cancelled(cancel_event)
+        info = self._publish_certificate(domains, order.fullchain_pem, certificate_key, cancel_event)
         paths = self.cert_paths(main)
-        _write(paths["fullchain"], fullchain, 0o644)
-        _write(paths["cert"], cert_pem, 0o644)
-        _write(paths["ca"], chain_pem, 0o644)
-        _write(paths["key"], key_path.read_text(encoding="utf-8"), 0o600)
-
-        info = certificate_info(paths["fullchain"])
         _LOGGER.info(
             "Issued certificate for %s, expires %s", ", ".join(domains), info["expiry_date"]
         )
@@ -370,11 +438,40 @@ class CertificateManager:
             issuer=info["issuer"],
         )
 
+    def _publish_certificate(
+        self, domains: list[str], fullchain: str, key: Any, cancel_event: threading.Event
+    ) -> dict[str, Any]:
+        cert_pem, chain_pem = split_fullchain(fullchain)
+        live = self.live_dir(domains[0])
+        live.mkdir(parents=True, exist_ok=True)
+        generation = Path(tempfile.mkdtemp(prefix="generation-", dir=live))
+        pending = live / f".current-{uuid4().hex}"
+        published = False
+        try:
+            _write(generation / "fullchain.pem", fullchain, 0o644)
+            _write(generation / "cert.pem", cert_pem, 0o644)
+            _write(generation / "chain.pem", chain_pem, 0o644)
+            write_private_key(generation / "privkey.pem", key)
+            info = certificate_info(generation / "fullchain.pem", generation / "privkey.pem", domains)
+            if info["days_remaining"] < 0:
+                raise AcmeError("the CA returned an expired certificate")
+            _check_cancelled(cancel_event)
+            pending.symlink_to(generation.name, target_is_directory=True)
+            os.replace(pending, live / "current")
+            published = True
+            return info
+        finally:
+            pending.unlink(missing_ok=True)
+            if not published:
+                shutil.rmtree(generation)
+
     def _publish_challenges(
-        self, order: Any, messages: Any, dns: DnsChallenge, account_jwk: Any
+        self, order: Any, messages: Any, dns: DnsChallenge, account_jwk: Any,
+        cancel_event: threading.Event,
     ) -> list[tuple[Any, str, str, str]]:
         challenges = []
         for authz in order.authorizations:
+            _check_cancelled(cancel_event)
             if authz.body.status == messages.STATUS_VALID:
                 continue
             challenge_body = next(
@@ -397,14 +494,16 @@ class CertificateManager:
         return challenges
 
     def _load_registration(self, path: Path, messages: Any) -> Any:
+        from josepy.errors import DeserializationError
+
         if not path.is_file():
             return None
         try:
             return messages.RegistrationResource.from_json(
                 json.loads(path.read_text(encoding="utf-8"))
             )
-        except (ValueError, KeyError, TypeError) as err:
-            _LOGGER.warning("Ignoring unreadable ACME registration %s: %s", path, err)
+        except (ValueError, KeyError, TypeError, DeserializationError) as err:
+            _LOGGER.warning("Ignoring unreadable ACME registration (%s)", type(err).__name__)
             return None
 
     def _registration_body(self, messages: Any, directory: Any, account_jwk: Any) -> Any:

@@ -1,6 +1,7 @@
 {
-  "name": "ACME SSL Certificate Manager",
+  "name": "ha-certbot",
   "content_in_root": false,
   "render_readme": true,
-  "zip_release": false
+  "zip_release": false,
+  "homeassistant": "2026.11.1"
 }
