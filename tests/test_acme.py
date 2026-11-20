@@ -320,7 +320,10 @@ def test_long_domain_uses_san_without_invalid_common_name():
 
 
 def test_release_materials_and_ci_are_consistent():
+    from importlib.metadata import version
     import json
+
+    from packaging.requirements import Requirement
     import yaml
 
     root = ROOT.parents[1]
@@ -329,6 +332,9 @@ def test_release_materials_and_ci_are_consistent():
     requirements = set((root / "requirements-test.txt").read_text().splitlines())
     workflow = yaml.safe_load((root / ".github/workflows/checks.yaml").read_text())
     assert set(manifest["requirements"]) <= requirements
+    for spec in manifest["requirements"]:
+        requirement = Requirement(spec)
+        assert version(requirement.name) in requirement.specifier
     assert hacs["homeassistant"] == "2026.11.1"
     assert manifest["version"] == "2.0.0"
     assert "MIT License" in (root / "LICENSE").read_text()

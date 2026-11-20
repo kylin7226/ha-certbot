@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from homeassistant.config_entries import ConfigEntries, ConfigEntry
+from homeassistant.config_entries import ConfigEntries, ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.selector import Selector
 import probatio
@@ -62,7 +62,10 @@ async def main(config_dir):
             patch.object(hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)),
             patch.object(hass.config_entries, "async_schedule_reload", Mock()) as reload_entry,
         ):
+            # Direct setup bypasses the state transitions normally performed by HA.
+            entry._async_set_state(hass, ConfigEntryState.SETUP_IN_PROGRESS, None)
             assert await async_setup_entry(hass, entry)
+            entry._async_set_state(hass, ConfigEntryState.LOADED, None)
             forward.assert_awaited_once()
             sensor = HaCertbotCertificateSensor(hass.data[DOMAIN][entry.entry_id])
             assert sensor.native_value == "not_found"

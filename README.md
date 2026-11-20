@@ -25,7 +25,7 @@
 
 `manifest.json` 的 `requirements` 里钉死了版本，由 Home Assistant 在加载集成前自动安装：
 
-- `acme==5.10.0`（certbot 官方 ACME 库，依赖 josepy、PyOpenSSL、cryptography）
+- `acme==5.7.0`（certbot 官方 ACME 库，与 HA 2026.11.1 的 hass-nabucasa 依赖保持一致）
 - `dns-lexicon==3.26.0`（DNS 操作，依赖 dnspython、tldextract 等）
 
 条件是容器内可写 site-packages（root）且能访问 PyPI。容器重建后 HA 会自动重装，

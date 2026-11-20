@@ -1,4 +1,4 @@
-acme==5.10.0
+acme==5.7.0
 dns-lexicon==3.26.0
 cryptography==50.0.2
 pyOpenSSL==26.4.0
